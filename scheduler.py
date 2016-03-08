@@ -41,7 +41,7 @@ def default_score(interval, job, time):
     ''' Get value that describes the fitness of this job to the given interval
     '''
     part = interval.length / job.length
-    hardness = job.duration / (job.finish - job.start)
+    hardness = job.duration / job.length
     return part * hardness
 
 def enhanced_score(interval, job, time):
@@ -49,14 +49,14 @@ def enhanced_score(interval, job, time):
         for a delay between the end of previous window
         and the beginning of current window
     '''
-    part = interval.length / float(job.length)
+    part = interval.length / float(job.finish - time)
     hardness = job.duration / float(job.finish - time)
     return part * hardness
 
 def get_window_score(score, window, job, time):
     ''' Get value that describes the fitness of this job to the given window
     '''
-    if window.contains(job) and window.partition == job.partition:
+    if job.contains(window) and window.partition == job.partition:
         return score(window, job, time)
     return 0.0
 
@@ -64,9 +64,14 @@ def get_enhanced_window_score(score, window, job, time):
     ''' This function includes the penalty for the window
         overlapping the parts of jobs that cannot be scheduled in it
     '''
-    if window.contains(job) and window.partition == job.partition:
+    if job.contains(window) and window.partition == job.partition:
+        print ("+", score(window, job, time), end=" ")
         return score(window, job, time)
-    if window.start < job.start < window.finish:
+    elif job.contains(window):
+        print ("-", score(Interval(time, window.finish), job, time), end=" ")
+        return -score(Interval(time, window.finish), job, time)
+    elif window.start < job.start < window.finish:
+        print ("-", score(Interval(job.start, window.finish), job, time), end=" ")
         return -score(Interval(job.start, window.finish), job, time)
     return 0.0
 
@@ -80,8 +85,9 @@ window_score_criteria = {
     'enhanced': get_enhanced_window_score
 }
 
+
 class HybridSchedule:
-    def __init__(self, score='enhanced', window_score='enhanced'):
+    def __init__(self, score='enhanced', window_score='enhanced', recalc_jobs=True):
         if isinstance(score, str):
             score = score_criteria[score]
         if isinstance(window_score, str):
@@ -89,6 +95,7 @@ class HybridSchedule:
         self.score = score
         self.window_score = lambda w, j, t: window_score(score, w, j, t)
         self.verbose = 0
+        self.recalc_jobs = recalc_jobs
 
     def build(self, jobs, min_window_size):
         self.jobs = deepcopy(jobs)
@@ -135,6 +142,8 @@ class HybridSchedule:
                 # the given greedy criterion. The partition of the new window
                 # is also chosen here.
                 window = self.__find_best_window(possible_windows, time)
+                if self.recalc_jobs:
+                    self.__recalc_jobs(window, time)
                 time = window.finish
                 yield window
             else:
@@ -148,6 +157,13 @@ class HybridSchedule:
                 time = finish
             count += 1
 
+    def __recalc_jobs(self, window, time):
+        scores = [max(0.0, self.window_score(window, job, time)) for job in self.jobs]
+        total = sum(scores)
+        deltas = [score / total * window.length for score in scores]
+        for job, delta in zip(self.jobs, deltas):
+            job.duration = max(0, job.duration - delta)
+
     def __find_best_window(self, possible_windows, time):
         ''' Find the best window from the given set of windows using a greedy criterion
         :return: best fitted window
@@ -157,6 +173,9 @@ class HybridSchedule:
             for p in range(self.partitions_count):
                 window = Window(window_start, window_finish, p)
                 score = self.__calculate_greedy_func(window, time)
+                print("")
+                if self.verbose > 1:
+                    print (window, "score = {}".format(score))
                 if best_score is None or score > best_score:
                     best_score, best_window = score, window
         self.__verbose_print("Best window is {} with score {}".format(best_window, best_score))
@@ -212,7 +231,7 @@ class HybridSchedule:
         self.__verbose_print("Weights are", weights)
         durations = [min(w * (finish - start), d) for w, d in zip(weights, durations)]
         self.__verbose_print("Durations are", durations)
-        partitions_order = sorted(range(self.partitions_count), key=lambda p: durations[p])
+        partitions_order = sorted(range(self.partitions_count), key=lambda p: -durations[p])
         for p in partitions_order:
             if start + durations[p] > finish:
                 return
@@ -229,10 +248,10 @@ class HybridSchedule:
 
 def main():
     s = HybridSchedule()
-    s.verbose = 1
-    jobs = [Job(0, 20, 0, 4),
+    s.verbose = 2
+    jobs = [Job(0, 20, 0, 5),
             Job(2, 20, 1, 5),
-            Job(0, 20, 1, 4),
+            Job(0, 20, 1, 5),
             Job(2, 20, 2, 5)]
     s.build(jobs, 3)
 
