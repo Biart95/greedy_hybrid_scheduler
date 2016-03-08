@@ -1,4 +1,4 @@
-__author__ = 'root'
+__author__ = 'Artem Bishev'
 
 import scheduler
 import unittest
