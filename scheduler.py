@@ -49,8 +49,8 @@ def enhanced_score(interval, job, time):
         for a delay between the end of previous window
         and the beginning of current window
     '''
-    part = interval.length / job.length
-    hardness = job.duration / (job.finish - time)
+    part = interval.length / float(job.length)
+    hardness = job.duration / float(job.finish - time)
     return part * hardness
 
 def get_window_score(score, window, job, time):
@@ -101,9 +101,9 @@ class HybridSchedule:
         self.__build_network()
         self.__find_schedule()
 
-    def __verbose_print(self, *msg):
+    def __verbose_print(self, *args, **kwargs):
         if self.verbose > 0:
-            print(*msg)
+            print(*args, **kwargs)
 
     def __getattr__(self, attr):
         if attr in ["jobs", "windows",  "network", "jobs_distribution", "partitions_count"]:
@@ -142,7 +142,7 @@ class HybridSchedule:
                 # (i.e. we have a very long sub-interval of length >> min_window_size)
                 # split the next sub-interval by new windows correspondingly to their weights.
                 # The weights can be also determined as the values of greedy criterion
-                finish = min(filter(timestamps, lambda t: t > time)) # end of the sub-interval
+                finish = min(filter(lambda t: t > time, timestamps)) # end of the sub-interval
                 for window in self.__split_subinterval_by_windows(time, finish):
                     yield window
                 time = finish
@@ -204,7 +204,7 @@ class HybridSchedule:
             return filter(lambda job: job.start <= start and
                                       job.finish >= finish and
                                       job.partition == p, self.jobs)
-        jobs = [filter_jobs(p) for p in range(self.partitions_count)]
+        jobs = [list(filter_jobs(p)) for p in range(self.partitions_count)]
         durations = [sum(job.duration for job in jobs[p]) for p in range(self.partitions_count)]
         weights = [sum(self.score(Interval(start, finish), job, start) for job in jobs[p])
                    for p in range(self.partitions_count)]
@@ -216,6 +216,7 @@ class HybridSchedule:
         for p in partitions_order:
             if start + durations[p] > finish:
                 return
+            self.__verbose_print(Window(start, start + durations[p], p), end=", ")
             yield Window(start, start + durations[p], p)
             start += durations[p]
 
@@ -229,17 +230,11 @@ class HybridSchedule:
 def main():
     s = HybridSchedule()
     s.verbose = 1
-    jobs = [Job(0, 20, 0, 5),
-            Job(0, 32, 0, 6),
-            Job(12, 51, 1, 10),
-            Job(15, 47, 1, 20),
-            Job(21, 62, 0, 20),
-            Job(33, 50, 0, 8),
-            Job(51, 100, 1, 25),
-            Job(64, 98, 0, 4),
-            Job(79, 88, 0, 7),
-            Job(77, 110, 1, 11)]
-    s.build(jobs, 28)
+    jobs = [Job(0, 20, 0, 4),
+            Job(2, 20, 1, 5),
+            Job(0, 20, 1, 4),
+            Job(2, 20, 2, 5)]
+    s.build(jobs, 3)
 
 if __name__ == '__main__':
     main()
