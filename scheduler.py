@@ -1,14 +1,26 @@
+#!/usr/bin/env python
+
 __author__ = 'Artyom Bishev'
 
 from copy import deepcopy
 from itertools import chain
 
+
+class IntervalError(ValueError):
+    pass
+
+
 class Interval:
     def __init__(self, start, finish):
+        if finish < start:
+            raise IntervalError("End of an interval must be >= its start")
         self.start, self.finish = start, finish
 
     def contains(self, other):
         return other.start >= self.start and other.finish <= self.finish
+
+    def __eq__(self, other):
+        return self.finish == other.finish and self.start == other.start
 
     @property
     def length(self):
@@ -29,6 +41,11 @@ class Window(Interval):
 class Job(Interval):
     def __init__(self, start, finish, partition, duration):
         super().__init__(start, finish)
+        if duration < 0:
+            raise ValueError("Job duration must be non-negative")
+        if duration > self.length:
+            raise ValueError("Job duration must be less or equal than "
+                             "the length of its directive interval")
         self.partition = partition
         self.duration = duration
 
@@ -38,31 +55,38 @@ class Job(Interval):
 
 
 def default_score(interval, job, time):
-    ''' Get value that describes the fitness of this job to the given interval
+    '''
+    Get value that describes the fitness of this job to the given interval
     '''
     part = interval.length / job.length
     hardness = job.duration / job.length
     return part * hardness
 
+
 def enhanced_score(interval, job, time):
-    ''' This criterion explicitly includes the penalty
-        for a delay between the end of previous window
-        and the beginning of current window
+    '''
+    This criterion explicitly includes the penalty
+    for a delay between the end of previous window
+    and the beginning of current window
     '''
     part = interval.length / float(job.finish - time)
     hardness = job.duration / float(job.finish - time)
     return part * hardness
 
+
 def get_window_score(score, window, job, time):
-    ''' Get value that describes the fitness of this job to the given window
+    '''
+    Get value that describes the fitness of this job to the given window
     '''
     if job.contains(window) and window.partition == job.partition:
         return score(window, job, time)
     return 0.0
 
+
 def get_enhanced_window_score(score, window, job, time):
-    ''' This function includes the penalty for the window
-        overlapping the parts of jobs that cannot be scheduled in it
+    '''
+    This function includes the penalty for the window in case it
+    overlaps some parts of jobs which cannot be scheduled in this window
     '''
     if job.contains(window) and window.partition == job.partition:
         print ("+", score(window, job, time), end=" ")
@@ -75,6 +99,7 @@ def get_enhanced_window_score(score, window, job, time):
         return -score(Interval(job.start, window.finish), job, time)
     return 0.0
 
+
 score_criteria = {
     'default': default_score,
     'enhanced': enhanced_score
@@ -84,6 +109,36 @@ window_score_criteria = {
     'default': get_window_score,
     'enhanced': get_enhanced_window_score
 }
+
+
+def get_acceptable_following_windows(time, jobs, min_window_size, verbose=False):
+    ''' Generate the best fitting intervals for the next window,
+        assuming that the previous scheduled window ended in the specified time
+
+        :param time - the moment of time when the last window ended
+        :returns yields appropriate intervals (start, end) of the new window
+    '''
+    max_start_time = time + min_window_size
+    # Construct the list of possible start times of the window
+    possible_start_time = set(filter(lambda t: time <= t < max_start_time,
+                                     [job.start for job in jobs]))
+    if len(possible_start_time) == 0 or time not in possible_start_time:
+        possible_start_time.add(time)
+    if verbose: print("Possible start:", possible_start_time)
+    # For each possible start of the window:
+    for start in possible_start_time:
+        # Construct the list of possible finish times of the window
+        max_finish_time = start + 2*min_window_size
+        min_finish_time = start + min_window_size
+        timestamps = chain([job.start for job in jobs],
+                           [job.finish for job in jobs])
+        possible_finish_time = set(filter(lambda t: min_finish_time <= t < max_finish_time,
+                                          timestamps))
+        if len(possible_finish_time) == 0 or min_finish_time not in possible_finish_time:
+            possible_finish_time.add(min_finish_time)
+        # For each possible finish of the window:
+        for finish in possible_finish_time:
+            yield (start, finish)
 
 
 class HybridSchedule:
@@ -98,14 +153,20 @@ class HybridSchedule:
         self.recalc_jobs = recalc_jobs
 
     def build(self, jobs, min_window_size):
+        # Initialize the members
         self.jobs = deepcopy(jobs)
         self.min_window_size = min_window_size
-        self.partitions_count = max(job.partition for job in jobs) + 1
+        self.partitions = set(job.partition for job in jobs)
+        self.partitions_count = len(self.partitions)
+        # Verbose output
         self.__verbose_print("Building the schedule with d={}".format(self.min_window_size))
         self.__verbose_print("Number of partitions is {}".format(self.partitions_count))
         self.__verbose_print("Number of jobs is {}".format(len(self.jobs)))
+        # Find the windows using a greedy strategy
         self.windows = list(self.__find_windows())
+        # Build the network to solve the rest of our task
         self.__build_network()
+        # Find max flow of the network and find the final solution
         self.__find_schedule()
 
     def __verbose_print(self, *args, **kwargs):
@@ -135,7 +196,9 @@ class HybridSchedule:
             # Perform a step of the greedy algorithm
             self.__verbose_print("\n====| Step #{}. Time = {} |====\n".format(count, time))
             # Get all candidates for the next window
-            possible_windows = list(self.__possible_windows(time))
+            possible_windows = list(get_acceptable_following_windows(time, self.jobs,
+                                                                     self.min_window_size,
+                                                                     self.verbose > 0))
             self.__verbose_print("Possible windows:", possible_windows)
             if len(possible_windows) > 1:
                 # If there are some, chose the best of them according to
