@@ -1,9 +1,16 @@
+#!/usr/bin/env python
+
 __author__ = 'Artem Bishev'
 
-from scheduler import IntervalError, Job, Window, Interval, get_acceptable_following_windows
+from schedule_entities import IntervalError, Job, Window, Interval
+from scheduler import get_acceptable_following_windows, distribute_intervals
 import unittest
 
+
 class BasicEntitiesTests(unittest.TestCase):
+    '''
+    Test capabilities of basic entities related to schedules
+    '''
     def test_interval_exceptions(self):
         with self.assertRaises(IntervalError):
             a = Interval(2, 1)
@@ -48,6 +55,9 @@ class BasicEntitiesTests(unittest.TestCase):
 
 
 class FindWindowsTests(unittest.TestCase):
+    '''
+    Test get_acceptable_following_windows function
+    '''
     def setUp(self):
         self.jobs = [Job(0,  10, 0, 5),
                      Job(5,  15, 0, 5),
@@ -148,6 +158,39 @@ class FindWindowsTests(unittest.TestCase):
         windows = set(windows_list)
         self.assertEqual(len(windows), 1)
         self.assertIn((25, 30), windows)
+
+
+class DistributeIntervalsTest(unittest.TestCase):
+    def test_full_capacity(self):
+        interval = Interval(0, 10)
+        max_sizes = [4, 3, 2, 2]
+        min_sizes = [2, 2, 2, 2]
+        weights = [3.0, 4.0, 2.0, 1.0]
+        self.assertNotIn(None, distribute_intervals(interval, weights,
+                                                    max_sizes, min_sizes))
+
+    def test_common(self):
+        interval = Interval(-7, 7)
+        max_sizes = [10, 8, 7, 5, 4]
+        min_sizes = [5, 5, 4, 4, 3]
+        weights = [1.5, 4.0, 5.0, 1.5, 2.0]
+        intervals = distribute_intervals(interval, weights,
+                                         max_sizes, min_sizes)
+        self.assertEqual(intervals[2], Interval(-7, -1))
+        self.assertEqual(intervals[1], Interval(-1, 4))
+        self.assertEqual(intervals[4], Interval(4, 7))
+        self.assertIs(intervals[0], None)
+        self.assertIs(intervals[3], None)
+
+    def test_not_full(self):
+        interval = Interval(0, 1.5)
+        max_sizes = [1, 1]
+        min_sizes = [1, 1]
+        weights = [1.01, 0.99]
+        intervals = distribute_intervals(interval, weights,
+                                         max_sizes, min_sizes)
+        self.assertEqual(intervals[0], Interval(0, 1))
+        self.assertIs(intervals[1], None)
 
 class SchedulerTests(unittest.TestCase):
     pass
