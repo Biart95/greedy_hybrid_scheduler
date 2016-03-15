@@ -34,7 +34,7 @@ class Window(Interval):
         super().__init__(start, finish)
         self.partition = partition
 
-    def __str__(self):
+    def __repr__(self):
         return "Window({}, {}, {})".format(self.start,
                                            self.finish,
                                            self.partition)
