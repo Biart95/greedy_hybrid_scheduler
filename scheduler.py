@@ -4,7 +4,10 @@ __author__ = 'Artem Bishev'
 
 from copy import deepcopy
 from itertools import chain
-from schedule_entities import Job, Interval, Window
+from schedule_entities import Job, Interval, Window, read_input_jobs
+import networkx as nx
+from networkx.algorithms.flow import preflow_push
+import argparse
 
 
 def default_score(interval, job, time):
@@ -41,15 +44,13 @@ def get_enhanced_window_score(score, window, job, time):
     This function includes the penalty for the window in case it
     overlaps some parts of jobs which cannot be scheduled in this window
     '''
+    aux_interval = Interval(time, window.finish)
     if job.contains(window) and window.partition == job.partition:
-        print ("+", score(window, job, time), end=" ")
+        #print ("+", score(window, job, time), end=" ")
         return score(window, job, time)
-    elif job.contains(window):
-        print ("-", score(Interval(time, window.finish), job, time), end=" ")
-        return -score(Interval(time, window.finish), job, time)
-    elif window.start < job.start < window.finish:
-        print ("-", score(Interval(job.start, window.finish), job, time), end=" ")
-        return -score(Interval(job.start, window.finish), job, time)
+    elif job.have_intersection(aux_interval, strict=True) and job.partition != window.partition:
+        #print ("-", score(job.intersect(aux_interval), job, time), end=" ")
+        return -0.95*score(Interval(job.start, window.finish), job, time)
     return 0.0
 
 
@@ -72,13 +73,16 @@ def get_acceptable_following_windows(time, jobs, min_window_size, verbose=False)
     :param time - the moment of time when the last window ended
     :returns yields appropriate intervals (start, end) of the new window
     '''
+
     max_start_time = time + min_window_size
+
     # Construct the list of possible start times of the window
     possible_start_time = set(filter(lambda t: time <= t < max_start_time,
                                      [job.start for job in jobs]))
     if len(possible_start_time) == 0 or time not in possible_start_time:
         possible_start_time.add(time)
     if verbose: print("Possible start:", possible_start_time)
+
     # For each possible start of the window:
     for start in possible_start_time:
         # Construct the list of possible finish times of the window
@@ -90,6 +94,7 @@ def get_acceptable_following_windows(time, jobs, min_window_size, verbose=False)
                                           timestamps))
         if len(possible_finish_time) == 0 or min_finish_time not in possible_finish_time:
             possible_finish_time.add(min_finish_time)
+
         # For each possible finish of the window:
         for finish in possible_finish_time:
             yield (start, finish)
@@ -100,13 +105,19 @@ def distribute_intervals(interval, distribution, max_sizes, min_sizes):
     Fill the interval by sub-intervals with lengths laying in given bounds
     picking their sizes close to the given distribution
     '''
+
     assert(isinstance(interval, Interval))
     total = sum(distribution)
+    if total == 0:
+        return []
+
     # Estimate lengths of sub-intervals
     durations = [min(s, d / total * interval.length)
                  for s, d in zip(max_sizes, distribution)]
+
     # Sort them. Longer sub-intervals go first
     order = sorted(range(len(durations)), key=lambda p: -durations[p])
+
     # Fill the interval iteratively by sub-intervals with calculated lengths
     # Until sub-intervals don't fit into the rest of the interval's space
     result = [None for _ in durations]
@@ -116,19 +127,21 @@ def distribute_intervals(interval, distribution, max_sizes, min_sizes):
         if start + length > interval.finish:
             break
         start += length
+
     # Expand the intervals so they occupy as much space as possible
     total_delta = interval.finish - start
     start = interval.start
     for p in order:
         length = max(durations[p], min_sizes[p])
-        delta = min(total_delta, max_sizes[p] - length)
+        delta = max(0, min(total_delta, max_sizes[p] - length))
         length += delta
         total_delta -= delta
         if start + length > interval.finish:
             break
         result[p] = Interval(start, start + length)
         start += length
-    # Return the calculated  sub-intervals
+
+    # Return the calculated sub-intervals
     return result
 
 
@@ -149,6 +162,7 @@ class HybridSchedule:
 
         # Initialize the members
         self.jobs = deepcopy(jobs)
+        self.initial_jobs = jobs
         self.min_window_size = min_window_size
         self.partitions = list(set(job.partition for job in jobs))
         self.partitions_count = len(self.partitions)
@@ -217,11 +231,17 @@ class HybridSchedule:
                 # (i.e. we have a very long sub-interval of length >> min_window_size)
                 # split the next sub-interval by new windows correspondingly to their weights.
                 # The weights can be also determined as the values of greedy criterion
-                finish = min(filter(lambda t: t > time, timestamps))  # end of the sub-interval
+                finish = max(time + self.min_window_size,
+                             min(filter(lambda t: t > time, timestamps)))  # end of the sub-interval
+                new_time = time
                 for window in self.__split_subinterval_by_windows(Interval(time, finish)):
                     self.__recalc_jobs(window, time)
+                    new_time = max(window.finish, new_time)
                     yield window
-                time = finish
+                if new_time == time:
+                    time = finish
+                else:
+                    time = new_time
             count += 1
 
 
@@ -234,9 +254,11 @@ class HybridSchedule:
 
         scores = [max(0.0, self.window_score(window, job, time)) for job in self.jobs]
         total = sum(scores)
+        if total < 1e-6:
+            return
         deltas = [score / total * window.length for score in scores]
         for job, delta in zip(self.jobs, deltas):
-            job.duration = max(0, job.duration - self.recalc_jobs * delta)
+            job.duration = max(0.01, job.duration - self.recalc_jobs * delta)
 
 
     def __find_best_window(self, intervals, time):
@@ -259,7 +281,6 @@ class HybridSchedule:
 
     def __calculate_greedy_func(self, window, time):
         result = sum(self.window_score(window, job, time) for job in self.jobs)
-        print("")
         return result
 
 
@@ -292,27 +313,75 @@ class HybridSchedule:
         min_sizes = [self.min_window_size for _ in self.partitions]
         window_intervals = distribute_intervals(interval, weights, durations, min_sizes)
         for p, i in enumerate(window_intervals):
-            if i is not None:
+            if i is not None and i.length > 0:
                 yield Window(i.start, i.finish, self.partitions[p])
 
 
     def __build_network(self):
-        pass
+        self.network = nx.DiGraph()
+        self.network.add_node("Source")
+        self.network.add_node("Sink")
+        self.total_duration = 0
+
+        for i, job in enumerate(self.initial_jobs):
+            self.network.add_node((Job, i))
+            self.network.add_edge("Source", (Job, i),
+                                  {"capacity": job.duration})
+            self.total_duration += job.duration
+            y = (2 * i - len(self.initial_jobs)) / len(self.initial_jobs)
+
+        for i, window in enumerate(self.windows):
+            self.network.add_node((Window, i))
+            self.network.add_edge((Window, i), "Sink",
+                                  {"capacity": window.length})
+            y = (2 * i - len(self.windows)) / len(self.windows)
+
+        max_capacity = sum(job.duration for job in self.initial_jobs)
+
+        for job_idx, job in enumerate(self.initial_jobs):
+            for window_idx, window in enumerate(self.windows):
+                if job.contains(window) and job.partition == window.partition:
+                    self.network.add_edge((Job, job_idx), (Window, window_idx))
 
 
     def __find_schedule(self):
-        pass
+        self.residual_network = preflow_push(self.network, "Source", "Sink")
+
+
+    def rate(self):
+        return 1.0 + (self.residual_network.graph['flow_value'] - self.total_duration) / self.total_duration
+
+    def exists(self):
+        return self.rate() >= 0.99
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Build hybrid static/dynamic "
+                                                 "scheduler using the greedy strategy")
+    parser.add_argument('min_window_size', metavar='D', type=float,
+                        help='minimal window size allowed for the scheduling')
+    parser.add_argument('--verbose', action='store_true')
+    args = parser.parse_args()
+
     s = HybridSchedule()
-    s.verbose = 2
-    jobs = [Job(0, 20, "A", 5),
-            Job(2, 20, "B", 5),
-            Job(0, 20, "B", 5),
-            Job(2, 20, "C", 5)]
-    s.build(jobs, 5)
-    print(s.windows)
+    s.verbose = 1 if args.verbose else 0
+    jobs = read_input_jobs()
+    s.build(jobs, args.min_window_size)
+
+    if args.verbose:
+        print("")
+
+    print("rate = {}".format(s.rate()))
+    print("n_windows = {}".format(len(s.windows)))
+    for window in s.windows:
+        print(window.start, window.finish, window.partition)
+    for job_idx, job in enumerate(s.initial_jobs):
+        for window_idx, window in enumerate(s.windows):
+            edge = s.residual_network.get_edge_data((Job, job_idx), (Window, window_idx),
+                                                    default={"flow" : 0.0})
+            print(edge["flow"] / job.duration, end=" ")
+        print()
+
 
 if __name__ == '__main__':
     main()

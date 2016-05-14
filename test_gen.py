@@ -49,7 +49,7 @@ def generate_jobs(windows, hardness, min_duration, max_duration, load_factor):
         if len(matching_indices) == 0:
             continue
         idx = random.choice(matching_indices)
-        h = random.expovariate(1.0 / (hardness - 1.0)) + 1.0
+        # h = random.expovariate(1.0 / (hardness - 1.0)) + 1.0
         r = windows[idx].length * (hardness - 1.0)
         a = random.uniform(0.0, 1.0)
         start = windows[idx].start - r * a
@@ -61,18 +61,20 @@ def generate_jobs(windows, hardness, min_duration, max_duration, load_factor):
 
 
 if __name__ == '__main__':
+    jobs_file = open('jobs', 'w')
+    windows_file = open('windows', 'w')
 
-    parser = argparse.ArgumentParser(description="Generate data for the scheduler")
-    parser.add_argument('load_factor', metavar='LOAD', type=float,
-                        help='load factor')
-    parser.add_argument('hardness', metavar='H', type=float,
-                        help='apriori hardness')
-    parser.add_argument('min_window_len', metavar='MIN', type=float,
-                        help='minimal length of the window')
-    parser.add_argument('max_window_len', metavar='MAX', type=float,
-                        help='maximal length of the window')
-    parser.add_argument('total_len', metavar='L', type=float,
-                        help='total length of the scheduling interval')
-    parser.add_argument('')
+    partitions = {'A': 0.1, 'B': 0.1, 'C': 0.2, 'D': 0.3, 'E': 0.3}
+    # Generate windows
+    windows = list(generate_windows(10, 100, partitions, 500))
+    # Save windows to file
+    for window in windows:
+        print(window.start, window.finish, window.partition, file=windows_file)
+    # Generate jobs using the generated list of windows
+    hardness, load_factor = 1.1, 0.85
+    jobs = list(generate_jobs(windows, hardness, 1, 40, load_factor))
+    # Save jobs to file
+    for job in jobs:
+        print(job.start, job.finish, job.partition, job.duration, file=jobs_file)
 
 

@@ -2,6 +2,8 @@
 
 __author__ = 'Artem Bishev'
 
+import sys
+
 
 class IntervalError(ValueError):
     pass
@@ -13,8 +15,20 @@ class Interval:
             raise IntervalError("End of an interval must be >= its start")
         self.start, self.finish = start, finish
 
-    def contains(self, other):
-        return other.start >= self.start and other.finish <= self.finish
+    def contains(self, other, eps=1e-3):
+        return other.start + eps >= self.start and other.finish - eps <= self.finish
+
+    def intersect(self, other):
+        try:
+            return Interval(max(self.start, other.start), min(self.finish, other.finish))
+        except IntervalError:
+            return None
+
+    def have_intersection(self, other, strict=False):
+        intersection = self.intersect(other)
+        if intersection is None:
+            return False
+        return (not strict) or intersection.length > 0
 
     def __eq__(self, other):
         if not isinstance(other, Interval):
@@ -54,3 +68,15 @@ class Job(Interval):
     def __repr__(self):
         return "Job({}, {}, {})".format(self.start, self.finish,
                                         self.partition, self.duration)
+
+
+def read_input_jobs():
+    jobs = []
+    for line in sys.stdin:
+        job_params = line.strip().split()
+        if len(job_params) > 0:
+            jobs.append(Job(float(job_params[0]),
+                            float(job_params[1]),
+                            job_params[2],
+                            float(job_params[3])))
+    return jobs
