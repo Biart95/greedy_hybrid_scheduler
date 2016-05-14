@@ -63,14 +63,14 @@ x = [0.5 * (bins[i + 1] + bins[i])
 y = []
 for i, count in enumerate(hist[:-5]):
     mask = (bins[i] <= hardness_arr) & (hardness_arr < bins[i + 1])
-    y.append(np.mean(quality_block[mask], axis=0))
+    y.append(np.mean(quality_rate[mask], axis=0))
 
 y = np.array(y)
 matplotlib.rc('font', family="Courier New")
 for i in range(y.shape[1]):
     plt.plot(x, y[:, i])
     plt.xlabel("Жёсткость директивных интервалов")
-    plt.ylabel("Доля полностью построенных расписаний")
+    plt.ylabel("Средняя доля размещённых работ")
 plt.show()
 
 
@@ -85,5 +85,33 @@ s = HybridSchedule('enhanced', 'enhanced', recalc_jobs=1.0)
 s.build(jobs, min_window_size)
 
 plot_windows(s)
+
+
+load_factors = np.linspace(0.25, 0.95, num=16)
+hardness = 1.1
+
+y1, y2 = [], []
+
+for load in load_factors:
+    print("load = {}".format(load))
+    rate = 0
+    block = 0
+    for _ in range(50):
+        windows = list(generate_windows(min_window_size, max_window_size,
+                                        partitions, total_len))
+        jobs = list(generate_jobs(windows, hardness, min_job_duration,
+                                  max_job_duration, load))
+        s = HybridSchedule('enhanced', 'enhanced', recalc_jobs=1.0)
+        s.build(jobs, min_window_size)
+        rate += s.rate()
+        block += 1.0 if s.exists() else 0.0
+    y2.append(rate / 50)
+    y1.append(block / 50)
+
+plt.plot(load_factors, y1, 'b', label="Доля построенных расписаний")
+plt.plot(load_factors, y2, 'b--', label="Средняя доля размещённых работ")
+plt.legend(loc='best')
+plt.xlabel("Коэффициент загрузки процессора")
+plt.show()
 
 

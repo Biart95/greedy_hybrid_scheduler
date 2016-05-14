@@ -29,7 +29,7 @@ solutions = dict()
 
 load_factors = [0.9, 0.7, 0.5, 0.3]
 
-n_runs = 2000
+n_runs = 1000
 
 min_h, max_h = [1.01, 3.0]
 hardnesses = [7, 10, 14]
